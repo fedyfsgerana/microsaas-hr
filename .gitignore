@@ -1,0 +1,30 @@
+# dependencies
+node_modules
+
+# build
+dist
+build
+
+# logs
+logs
+*.log
+
+# env
+.env
+
+# cache
+.cache
+coverage
+
+# vscode
+.vscode
+
+# os
+.DS_Store
+Thumbs.db
+
+# frontend
+frontend/dist
+
+# backend
+backend/dist
