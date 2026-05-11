@@ -1,1 +1,226 @@
-﻿export default function EmployeesPage() { return <div>Employees</div> }
+﻿import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import api from '../../api/axios';
+import { useToast } from '../../components/ui/Toast';
+import { useConfirm } from '../../components/ui/ConfirmDialog';
+import Modal from '../../components/ui/Modal';
+import Badge from '../../components/ui/Badge';
+import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import EmptyState from '../../components/ui/EmptyState';
+import EmployeeForm from './EmployeeForm';
+
+const statusVariant = {
+    ACTIVE: 'success',
+    INACTIVE: 'warning',
+    RESIGNED: 'gray',
+    TERMINATED: 'danger',
+};
+
+const statusLabel = {
+    ACTIVE: 'Aktif',
+    INACTIVE: 'Tidak Aktif',
+    RESIGNED: 'Resign',
+    TERMINATED: 'Diberhentikan',
+};
+
+export default function EmployeesPage() {
+    const toast = useToast();
+    const confirm = useConfirm();
+    const queryClient = useQueryClient();
+
+    const [search, setSearch] = useState('');
+    const [modalOpen, setModalOpen] = useState(false);
+    const [selectedEmployee, setSelectedEmployee] = useState(null);
+
+    const { data: employees = [], isLoading } = useQuery({
+        queryKey: ['employees', search],
+        queryFn: async () => {
+            const res = await api.get('/employees', { params: { search } });
+            return res.data;
+        },
+    });
+
+    const archiveMutation = useMutation({
+        mutationFn: (id) => api.delete(`/employees/${id}`),
+        onSuccess: () => {
+            toast('Karyawan berhasil diarsipkan', 'success');
+            queryClient.invalidateQueries(['employees']);
+        },
+        onError: (err) => {
+            toast(err.response?.data?.message || 'Gagal mengarsipkan karyawan', 'error');
+        },
+    });
+
+    const handleAdd = () => {
+        setSelectedEmployee(null);
+        setModalOpen(true);
+    };
+
+    const handleEdit = (employee) => {
+        setSelectedEmployee(employee);
+        setModalOpen(true);
+    };
+
+    const handleArchive = async (employee) => {
+        const ok = await confirm({
+            title: 'Arsipkan Karyawan?',
+            message: `${employee.fullName} akan dinonaktifkan dan tidak bisa login. Data histori tetap tersimpan.`,
+            confirmText: 'Ya, Arsipkan',
+            type: 'warning',
+        });
+        if (ok) archiveMutation.mutate(employee.id);
+    };
+
+    const handleModalClose = () => {
+        setModalOpen(false);
+        setSelectedEmployee(null);
+    };
+
+    const handleSuccess = () => {
+        handleModalClose();
+        queryClient.invalidateQueries(['employees']);
+    };
+
+    return (
+        <div className="space-y-6">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-900">Karyawan</h1>
+                    <p className="mt-1 text-sm text-gray-500">
+                        {employees.length} karyawan terdaftar
+                    </p>
+                </div>
+                <button onClick={handleAdd} className="flex items-center gap-2 btn-primary">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Tambah Karyawan
+                </button>
+            </div>
+
+            {/* Search */}
+            <div className="relative">
+                <svg className="absolute w-4 h-4 text-gray-400 -translate-y-1/2 left-3 top-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input
+                    type="text"
+                    placeholder="Cari nama, jabatan, kode karyawan..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="pl-10 input-field"
+                />
+            </div>
+
+            {/* Table */}
+            <div className="p-0 overflow-hidden card">
+                {isLoading ? (
+                    <LoadingSpinner center />
+                ) : employees.length === 0 ? (
+                    <EmptyState
+                        title="Belum ada karyawan"
+                        description="Tambahkan karyawan pertama Anda"
+                        action={
+                            <button onClick={handleAdd} className="btn-primary">
+                                Tambah Karyawan
+                            </button>
+                        }
+                    />
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="border-b border-gray-100 bg-gray-50">
+                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Karyawan</th>
+                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Jabatan</th>
+                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Divisi</th>
+                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Status</th>
+                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Bergabung</th>
+                                    <th className="px-6 py-3" />
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-50">
+                                {employees.map((emp) => (
+                                    <tr key={emp.id} className="transition-colors hover:bg-gray-50">
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-3">
+                                                <div className="flex items-center justify-center flex-shrink-0 rounded-full w-9 h-9 bg-primary-100">
+                                                    <span className="text-sm font-semibold text-primary-700">
+                                                        {emp.fullName.charAt(0)}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <p className="font-medium text-gray-900">{emp.fullName}</p>
+                                                    <p className="text-xs text-gray-400">{emp.user?.email}</p>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 text-gray-600">
+                                            {emp.position || '-'}
+                                        </td>
+                                        <td className="px-6 py-4 text-gray-600">
+                                            {emp.department?.name || '-'}
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <Badge variant={statusVariant[emp.status]}>
+                                                {statusLabel[emp.status]}
+                                            </Badge>
+                                        </td>
+                                        <td className="px-6 py-4 text-gray-500">
+                                            {emp.joinDate
+                                                ? new Date(emp.joinDate).toLocaleDateString('id-ID', {
+                                                    day: 'numeric',
+                                                    month: 'short',
+                                                    year: 'numeric',
+                                                })
+                                                : '-'}
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center justify-end gap-2">
+                                                <button
+                                                    onClick={() => handleEdit(emp)}
+                                                    className="text-gray-400 transition-colors hover:text-primary-600"
+                                                    title="Edit"
+                                                >
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                                    </svg>
+                                                </button>
+                                                {emp.status === 'ACTIVE' && (
+                                                    <button
+                                                        onClick={() => handleArchive(emp)}
+                                                        className="text-gray-400 transition-colors hover:text-red-500"
+                                                        title="Arsipkan"
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                                                        </svg>
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+
+            {/* Modal */}
+            <Modal
+                isOpen={modalOpen}
+                onClose={handleModalClose}
+                title={selectedEmployee ? 'Edit Karyawan' : 'Tambah Karyawan'}
+                size="lg"
+            >
+                <EmployeeForm
+                    employee={selectedEmployee}
+                    onSuccess={handleSuccess}
+                    onCancel={handleModalClose}
+                />
+            </Modal>
+        </div>
+    );
+}
