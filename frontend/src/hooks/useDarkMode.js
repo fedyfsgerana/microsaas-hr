@@ -2,10 +2,16 @@ import { useState, useEffect } from "react";
 
 export function useDarkMode() {
   const [isDark, setIsDark] = useState(() => {
-    const saved = localStorage.getItem("darkMode");
-    return saved
-      ? JSON.parse(saved)
-      : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    try {
+      const saved = localStorage.getItem("darkMode");
+      if (saved === null) {
+        return window.matchMedia("(prefers-color-scheme: dark)").matches;
+      }
+      return JSON.parse(saved);
+    } catch {
+      localStorage.removeItem("darkMode");
+      return false;
+    }
   });
 
   useEffect(() => {
