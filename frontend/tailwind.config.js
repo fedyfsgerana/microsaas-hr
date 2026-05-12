@@ -1,6 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
@@ -17,9 +18,7 @@ export default {
           900: "#1e3a8a",
         },
       },
-      fontFamily: {
-        sans: ["Inter", "sans-serif"],
-      },
+      fontFamily: { sans: ["Inter", "sans-serif"] },
       keyframes: {
         "slide-in": {
           "0%": { transform: "translateX(100%)", opacity: "0" },
@@ -29,10 +28,15 @@ export default {
           "0%": { transform: "scale(0.95)", opacity: "0" },
           "100%": { transform: "scale(1)", opacity: "1" },
         },
+        "fade-in": {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
       },
       animation: {
         "slide-in": "slide-in 0.2s ease-out",
         "scale-in": "scale-in 0.15s ease-out",
+        "fade-in": "fade-in 0.2s ease-out",
       },
     },
   },

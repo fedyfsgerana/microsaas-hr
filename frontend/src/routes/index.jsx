@@ -1,6 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import useAuthStore from '../store/authStore';
-
 import LoginPage from '../pages/auth/LoginPage';
 import RegisterPage from '../pages/auth/RegisterPage';
 import DashboardPage from '../pages/dashboard/DashboardPage';
@@ -9,7 +8,7 @@ import AttendancePage from '../pages/attendance/AttendancePage';
 import LeavePage from '../pages/leave/LeavePage';
 import PayrollPage from '../pages/payroll/PayrollPage';
 import CompanyPage from '../pages/company/CompanyPage';
-
+import ProfilePage from '../pages/profile/ProfilePage';
 import MainLayout from '../components/layout/MainLayout';
 
 const ProtectedRoute = ({ children }) => {
@@ -25,11 +24,8 @@ const PublicRoute = ({ children }) => {
 export default function AppRoutes() {
     return (
         <Routes>
-            {/* Public */}
             <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
             <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
-
-            {/* Protected */}
             <Route path="/" element={<ProtectedRoute><MainLayout /></ProtectedRoute>}>
                 <Route index element={<Navigate to="/dashboard" replace />} />
                 <Route path="dashboard" element={<DashboardPage />} />
@@ -38,8 +34,8 @@ export default function AppRoutes() {
                 <Route path="leave" element={<LeavePage />} />
                 <Route path="payroll" element={<PayrollPage />} />
                 <Route path="company" element={<CompanyPage />} />
+                <Route path="profile" element={<ProfilePage />} />
             </Route>
-
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
     );
