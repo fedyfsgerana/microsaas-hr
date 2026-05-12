@@ -4,39 +4,21 @@ export default {
   darkMode: "class",
   theme: {
     extend: {
+      fontFamily: { sans: ["Inter", "sans-serif"] },
       colors: {
-        primary: {
-          50: "#eff6ff",
-          100: "#dbeafe",
-          200: "#bfdbfe",
-          300: "#93c5fd",
-          400: "#60a5fa",
-          500: "#3b82f6",
-          600: "#2563eb",
-          700: "#1d4ed8",
-          800: "#1e40af",
-          900: "#1e3a8a",
+        gray: {
+          950: "#0a0f1a",
         },
       },
-      fontFamily: { sans: ["Inter", "sans-serif"] },
-      keyframes: {
-        "slide-in": {
-          "0%": { transform: "translateX(100%)", opacity: "0" },
-          "100%": { transform: "translateX(0)", opacity: "1" },
-        },
-        "scale-in": {
-          "0%": { transform: "scale(0.95)", opacity: "0" },
-          "100%": { transform: "scale(1)", opacity: "1" },
-        },
-        "fade-in": {
-          "0%": { opacity: "0" },
-          "100%": { opacity: "1" },
-        },
+      borderRadius: {
+        "2xl": "1rem",
+        "3xl": "1.5rem",
       },
       animation: {
-        "slide-in": "slide-in 0.2s ease-out",
-        "scale-in": "scale-in 0.15s ease-out",
-        "fade-in": "fade-in 0.2s ease-out",
+        "slide-in": "slideIn 0.22s ease-out",
+        "scale-in": "scaleIn 0.18s ease-out",
+        "fade-in": "fadeIn 0.2s ease-out",
+        "spin-slow": "spin 3s linear infinite",
       },
     },
   },
