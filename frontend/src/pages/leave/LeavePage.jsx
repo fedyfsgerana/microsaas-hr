@@ -5,27 +5,21 @@ import api from '../../api/axios';
 import { useToast } from '../../components/ui/Toast';
 import { useConfirm } from '../../components/ui/ConfirmDialog';
 import Modal from '../../components/ui/Modal';
-import Badge from '../../components/ui/Badge';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import EmptyState from '../../components/ui/EmptyState';
+import Pagination from '../../components/ui/Pagination';
 import LeaveForm from './LeaveForm';
 import ApproveLeaveForm from './ApproveLeaveForm';
+import { usePagination } from '../../hooks/usePagination';
 
-const statusVariant = {
-    PENDING: 'warning',
-    APPROVED: 'success',
-    REJECTED: 'danger',
-    CANCELLED: 'gray',
+const STATUS = {
+    PENDING: { label: 'Menunggu', cls: 'badge-warning' },
+    APPROVED: { label: 'Disetujui', cls: 'badge-success' },
+    REJECTED: { label: 'Ditolak', cls: 'badge-danger' },
+    CANCELLED: { label: 'Dibatalkan', cls: 'badge-gray' },
 };
 
-const statusLabel = {
-    PENDING: 'Menunggu',
-    APPROVED: 'Disetujui',
-    REJECTED: 'Ditolak',
-    CANCELLED: 'Dibatalkan',
-};
-
-const leaveTypeLabel = {
+const TYPE = {
     ANNUAL: 'Cuti Tahunan',
     SICK: 'Sakit',
     PERMIT: 'Izin',
@@ -39,60 +33,55 @@ export default function LeavePage() {
     const user = useAuthStore((s) => s.user);
     const isAdmin = ['SUPER_ADMIN', 'HR_ADMIN', 'MANAGER'].includes(user?.role);
 
+    const [filterStatus, setFilterStatus] = useState('');
     const [modalOpen, setModalOpen] = useState(false);
     const [approveModal, setApproveModal] = useState(false);
-    const [selectedLeave, setSelectedLeave] = useState(null);
-    const [filterStatus, setFilterStatus] = useState('');
+    const [selected, setSelected] = useState(null);
 
     const { data: leaves = [], isLoading } = useQuery({
         queryKey: ['leaves', isAdmin, filterStatus],
         queryFn: async () => {
-            const endpoint = isAdmin ? '/leaves/company' : '/leaves/my';
-            const res = await api.get(endpoint, {
+            const res = await api.get(isAdmin ? '/leaves/company' : '/leaves/my', {
                 params: filterStatus ? { status: filterStatus } : {},
             });
             return res.data;
         },
     });
 
+    const { page, totalPages, paginated, goToPage, nextPage, prevPage } = usePagination(leaves, 10);
+
     const cancelMutation = useMutation({
         mutationFn: (id) => api.patch(`/leaves/${id}/cancel`),
-        onSuccess: () => {
-            toast('Pengajuan cuti dibatalkan', 'success');
-            queryClient.invalidateQueries(['leaves']);
-        },
-        onError: (err) => {
-            toast(err.response?.data?.message || 'Gagal membatalkan cuti', 'error');
-        },
+        onSuccess: () => { toast('Pengajuan dibatalkan', 'success'); queryClient.invalidateQueries(['leaves']); },
+        onError: (err) => toast(err.response?.data?.message || 'Gagal', 'error'),
     });
 
     const handleCancel = async (leave) => {
         const ok = await confirm({
-            title: 'Batalkan Pengajuan Cuti?',
-            message: 'Pengajuan cuti yang dibatalkan tidak bisa dikembalikan.',
-            confirmText: 'Ya, Batalkan',
+            title: 'Batalkan Cuti?',
+            message: 'Pengajuan yang dibatalkan tidak bisa dikembalikan.',
+            confirmText: 'Batalkan',
             type: 'danger',
         });
         if (ok) cancelMutation.mutate(leave.id);
     };
 
-    const handleApprove = (leave) => {
-        setSelectedLeave(leave);
-        setApproveModal(true);
-    };
+    const pendingCount = leaves.filter((l) => l.status === 'PENDING').length;
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-5 page-enter">
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900">Cuti & Izin</h1>
-                    <p className="mt-1 text-sm text-gray-500">
-                        {isAdmin ? 'Kelola pengajuan cuti karyawan' : 'Pengajuan cuti Anda'}
+                    <h1 className="text-2xl font-black text-gray-900 dark:text-white">Cuti & Izin</h1>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+                        {isAdmin
+                            ? `${pendingCount} menunggu approval`
+                            : `${leaves.length} pengajuan`}
                     </p>
                 </div>
                 {!isAdmin && (
-                    <button onClick={() => setModalOpen(true)} className="flex items-center gap-2 btn-primary">
+                    <button onClick={() => setModalOpen(true)} className="btn-primary">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                         </svg>
@@ -101,68 +90,70 @@ export default function LeavePage() {
                 )}
             </div>
 
-            {/* Filter */}
-            <div className="flex flex-wrap items-center gap-2">
-                {['', 'PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'].map((status) => (
+            {/* Filter pills */}
+            <div className="flex flex-wrap gap-2">
+                {[{ val: '', label: 'Semua' }, ...Object.entries(STATUS).map(([val, { label }]) => ({ val, label }))].map(({ val, label }) => (
                     <button
-                        key={status}
-                        onClick={() => setFilterStatus(status)}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors
-              ${filterStatus === status
-                                ? 'bg-primary-600 text-white'
-                                : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                        key={val}
+                        onClick={() => setFilterStatus(val)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all
+              ${filterStatus === val
+                                ? 'bg-primary text-white shadow-sm'
+                                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
                             }`}
                     >
-                        {status === '' ? 'Semua' : statusLabel[status]}
+                        {label}
+                        {val === 'PENDING' && pendingCount > 0 && (
+                            <span className="ml-1.5 bg-amber-400 text-white rounded-full px-1.5 text-xs">{pendingCount}</span>
+                        )}
                     </button>
                 ))}
             </div>
 
-            {/* Table */}
-            <div className="p-0 overflow-hidden card">
-                {isLoading ? (
-                    <LoadingSpinner center />
-                ) : leaves.length === 0 ? (
-                    <EmptyState
-                        title="Belum ada pengajuan cuti"
-                        description={isAdmin ? 'Belum ada karyawan yang mengajukan cuti' : 'Anda belum pernah mengajukan cuti'}
-                        action={
-                            !isAdmin && (
-                                <button onClick={() => setModalOpen(true)} className="btn-primary">
-                                    Ajukan Cuti
-                                </button>
-                            )
-                        }
-                    />
-                ) : (
+            {/* Content */}
+            {isLoading ? (
+                <LoadingSpinner center />
+            ) : leaves.length === 0 ? (
+                <EmptyState
+                    title="Belum ada pengajuan cuti"
+                    description={isAdmin ? 'Belum ada karyawan yang mengajukan cuti' : 'Anda belum pernah mengajukan cuti'}
+                    action={!isAdmin && <button onClick={() => setModalOpen(true)} className="btn-primary">Ajukan Cuti</button>}
+                />
+            ) : (
+                <div className="p-0 overflow-hidden card">
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                             <thead>
-                                <tr className="border-b border-gray-100 bg-gray-50">
-                                    {isAdmin && (
-                                        <th className="px-6 py-3 font-medium text-left text-gray-500">Karyawan</th>
-                                    )}
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Jenis Cuti</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Tanggal</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Durasi</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Alasan</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Status</th>
-                                    <th className="px-6 py-3" />
+                                <tr className="border-b border-gray-100 dark:border-gray-800">
+                                    {isAdmin && <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Karyawan</th>}
+                                    <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Jenis</th>
+                                    <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Tanggal</th>
+                                    <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Durasi</th>
+                                    <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Alasan</th>
+                                    <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                                    <th className="px-6 py-3.5" />
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-gray-50">
-                                {leaves.map((leave) => (
-                                    <tr key={leave.id} className="transition-colors hover:bg-gray-50">
+                            <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                                {paginated.map((leave) => (
+                                    <tr key={leave.id} className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
                                         {isAdmin && (
                                             <td className="px-6 py-4">
-                                                <p className="font-medium text-gray-900">{leave.employee?.fullName}</p>
-                                                <p className="text-xs text-gray-400">{leave.employee?.department?.name}</p>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="flex items-center justify-center flex-shrink-0 rounded-lg w-7 h-7 bg-primary-50">
+                                                        <span className="text-xs font-bold text-primary">{leave.employee?.fullName?.charAt(0)}</span>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-sm font-semibold text-gray-900 dark:text-white">{leave.employee?.fullName}</p>
+                                                        <p className="text-xs text-gray-400">{leave.employee?.department?.name}</p>
+                                                    </div>
+                                                </div>
                                             </td>
                                         )}
                                         <td className="px-6 py-4">
-                                            <Badge variant="info">{leaveTypeLabel[leave.leaveType]}</Badge>
+                                            <span className="badge-info">{TYPE[leave.leaveType]}</span>
                                         </td>
-                                        <td className="px-6 py-4 text-gray-600">
+                                        <td className="px-6 py-4 text-gray-700 dark:text-gray-300">
                                             <p>{new Date(leave.startDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}</p>
                                             {leave.startDate !== leave.endDate && (
                                                 <p className="text-xs text-gray-400">
@@ -170,26 +161,22 @@ export default function LeavePage() {
                                                 </p>
                                             )}
                                         </td>
-                                        <td className="px-6 py-4 text-gray-600">
-                                            {leave.totalDays} hari
+                                        <td className="px-6 py-4 font-medium text-gray-700 dark:text-gray-300">
+                                            {leave.totalDays}h
                                         </td>
                                         <td className="max-w-xs px-6 py-4 text-gray-500 truncate">
                                             {leave.reason || '-'}
                                         </td>
                                         <td className="px-6 py-4">
-                                            <Badge variant={statusVariant[leave.status]}>
-                                                {statusLabel[leave.status]}
-                                            </Badge>
-                                            {leave.rejectReason && (
-                                                <p className="mt-1 text-xs text-red-500">{leave.rejectReason}</p>
-                                            )}
+                                            <span className={STATUS[leave.status]?.cls}>{STATUS[leave.status]?.label}</span>
+                                            {leave.rejectReason && <p className="mt-1 text-xs text-red-500">{leave.rejectReason}</p>}
                                         </td>
                                         <td className="px-6 py-4">
-                                            <div className="flex items-center justify-end gap-2">
+                                            <div className="flex items-center justify-end gap-1">
                                                 {isAdmin && leave.status === 'PENDING' && (
                                                     <button
-                                                        onClick={() => handleApprove(leave)}
-                                                        className="px-3 py-1 text-xs btn-primary"
+                                                        onClick={() => { setSelected(leave); setApproveModal(true); }}
+                                                        className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-primary-50 text-primary hover:bg-primary-100 dark:bg-primary-900/20 dark:hover:bg-primary-900/40 transition-colors"
                                                     >
                                                         Review
                                                     </button>
@@ -197,8 +184,7 @@ export default function LeavePage() {
                                                 {!isAdmin && leave.status === 'PENDING' && (
                                                     <button
                                                         onClick={() => handleCancel(leave)}
-                                                        className="text-gray-400 transition-colors hover:text-red-500"
-                                                        title="Batalkan"
+                                                        className="p-2 text-gray-400 transition-colors rounded-xl hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
                                                     >
                                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -212,36 +198,23 @@ export default function LeavePage() {
                             </tbody>
                         </table>
                     </div>
-                )}
-            </div>
+                    <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-800">
+                        <Pagination page={page} totalPages={totalPages} onPage={goToPage} onPrev={prevPage} onNext={nextPage} />
+                    </div>
+                </div>
+            )}
 
-            {/* Modal ajukan cuti */}
-            <Modal
-                isOpen={modalOpen}
-                onClose={() => setModalOpen(false)}
-                title="Ajukan Cuti"
-            >
+            <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title="Ajukan Cuti">
                 <LeaveForm
-                    onSuccess={() => {
-                        setModalOpen(false);
-                        queryClient.invalidateQueries(['leaves']);
-                    }}
+                    onSuccess={() => { setModalOpen(false); queryClient.invalidateQueries(['leaves']); }}
                     onCancel={() => setModalOpen(false)}
                 />
             </Modal>
 
-            {/* Modal approve */}
-            <Modal
-                isOpen={approveModal}
-                onClose={() => setApproveModal(false)}
-                title="Review Pengajuan Cuti"
-            >
+            <Modal isOpen={approveModal} onClose={() => setApproveModal(false)} title="Review Pengajuan Cuti">
                 <ApproveLeaveForm
-                    leave={selectedLeave}
-                    onSuccess={() => {
-                        setApproveModal(false);
-                        queryClient.invalidateQueries(['leaves']);
-                    }}
+                    leave={selected}
+                    onSuccess={() => { setApproveModal(false); queryClient.invalidateQueries(['leaves']); }}
                     onCancel={() => setApproveModal(false)}
                 />
             </Modal>

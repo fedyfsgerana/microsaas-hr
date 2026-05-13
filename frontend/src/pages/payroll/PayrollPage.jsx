@@ -5,21 +5,18 @@ import api from '../../api/axios';
 import { useToast } from '../../components/ui/Toast';
 import { useConfirm } from '../../components/ui/ConfirmDialog';
 import Modal from '../../components/ui/Modal';
-import Badge from '../../components/ui/Badge';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import EmptyState from '../../components/ui/EmptyState';
+import Pagination from '../../components/ui/Pagination';
+import ExportButton from '../../components/ui/ExportButton';
 import PayrollDetailModal from './PayrollDetailModal';
+import { usePagination } from '../../hooks/usePagination';
+import { useExport } from '../../hooks/useExport';
 
-const statusVariant = {
-    DRAFT: 'gray',
-    APPROVED: 'info',
-    SENT: 'success',
-};
-
-const statusLabel = {
-    DRAFT: 'Draft',
-    APPROVED: 'Disetujui',
-    SENT: 'Terkirim',
+const STATUS = {
+    DRAFT: { label: 'Draft', cls: 'badge-gray' },
+    APPROVED: { label: 'Disetujui', cls: 'badge-info' },
+    SENT: { label: 'Terkirim', cls: 'badge-success' },
 };
 
 const currentMonth = new Date().toISOString().slice(0, 7);
@@ -28,167 +25,142 @@ export default function PayrollPage() {
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();
+    const { exportCSV } = useExport();
     const user = useAuthStore((s) => s.user);
     const isAdmin = ['SUPER_ADMIN', 'HR_ADMIN'].includes(user?.role);
 
     const [period, setPeriod] = useState(currentMonth);
     const [detailModal, setDetailModal] = useState(false);
-    const [selectedPayroll, setSelectedPayroll] = useState(null);
+    const [selected, setSelected] = useState(null);
 
-    // Admin: payroll list
     const { data: payrolls = [], isLoading } = useQuery({
         queryKey: ['payrolls', period],
-        queryFn: async () => {
-            const res = await api.get('/payroll', { params: { period } });
-            return res.data;
-        },
+        queryFn: () => api.get('/payroll', { params: { period } }).then((r) => r.data),
         enabled: isAdmin,
     });
 
-    // Employee: my payrolls
     const { data: myPayrolls = [], isLoading: loadingMy } = useQuery({
         queryKey: ['my-payrolls'],
-        queryFn: async () => {
-            const res = await api.get('/payroll/my');
-            return res.data;
-        },
+        queryFn: () => api.get('/payroll/my').then((r) => r.data),
         enabled: !isAdmin,
     });
 
-    // Summary
     const { data: summary } = useQuery({
         queryKey: ['payroll-summary', period],
-        queryFn: async () => {
-            const res = await api.get('/payroll/summary', { params: { period } });
-            return res.data;
-        },
+        queryFn: () => api.get('/payroll/summary', { params: { period } }).then((r) => r.data),
         enabled: isAdmin,
     });
 
+    const { page, totalPages, paginated, goToPage, nextPage, prevPage } = usePagination(payrolls, 10);
+
     const generateMutation = useMutation({
-        mutationFn: (period) => api.post('/payroll/generate', { period }),
-        onSuccess: (data) => {
-            const created = data.data.results.filter((r) => r.status === 'created').length;
-            const skipped = data.data.results.filter((r) => r.status === 'skipped').length;
-            toast(`${created} payroll dibuat, ${skipped} dilewati`, 'success');
+        mutationFn: () => api.post('/payroll/generate', { period }),
+        onSuccess: (res) => {
+            const created = res.data.results?.filter((r) => r.status === 'created').length || 0;
+            toast(`${created} payroll berhasil dibuat`, 'success');
             queryClient.invalidateQueries(['payrolls']);
             queryClient.invalidateQueries(['payroll-summary']);
         },
-        onError: (err) => {
-            toast(err.response?.data?.message || 'Gagal generate payroll', 'error');
-        },
+        onError: (err) => toast(err.response?.data?.message || 'Gagal generate', 'error'),
     });
 
     const approveMutation = useMutation({
         mutationFn: (id) => api.patch(`/payroll/${id}/approve`),
-        onSuccess: () => {
-            toast('Payroll disetujui', 'success');
-            queryClient.invalidateQueries(['payrolls']);
-            queryClient.invalidateQueries(['payroll-summary']);
-        },
-        onError: (err) => {
-            toast(err.response?.data?.message || 'Gagal menyetujui payroll', 'error');
-        },
+        onSuccess: () => { toast('Payroll disetujui', 'success'); queryClient.invalidateQueries(['payrolls', 'payroll-summary']); },
+        onError: (err) => toast(err.response?.data?.message || 'Gagal', 'error'),
     });
 
     const sendMutation = useMutation({
         mutationFn: (id) => api.patch(`/payroll/${id}/send`),
-        onSuccess: () => {
-            toast('Slip gaji berhasil dikirim', 'success');
-            queryClient.invalidateQueries(['payrolls']);
-            queryClient.invalidateQueries(['payroll-summary']);
-        },
-        onError: (err) => {
-            toast(err.response?.data?.message || 'Gagal mengirim slip gaji', 'error');
-        },
+        onSuccess: () => { toast('Slip gaji terkirim ✓', 'success'); queryClient.invalidateQueries(['payrolls', 'payroll-summary']); },
+        onError: (err) => toast(err.response?.data?.message || 'Gagal', 'error'),
     });
 
     const handleGenerate = async () => {
         const ok = await confirm({
             title: 'Generate Payroll?',
-            message: `Payroll untuk periode ${period} akan digenerate berdasarkan data absensi. Karyawan yang sudah ada payroll-nya akan dilewati.`,
+            message: `Payroll periode ${period} akan dibuat berdasarkan data absensi.`,
             confirmText: 'Generate',
             type: 'info',
         });
-        if (ok) generateMutation.mutate(period);
+        if (ok) generateMutation.mutate();
     };
 
-    const handleApprove = async (payroll) => {
+    const handleApprove = async (p) => {
         const ok = await confirm({
             title: 'Setujui Payroll?',
-            message: `Payroll ${payroll.employee?.fullName} sebesar Rp ${Number(payroll.totalSalary).toLocaleString('id-ID')} akan disetujui.`,
+            message: `${p.employee?.fullName} · Rp ${Number(p.totalSalary).toLocaleString('id-ID')}`,
             confirmText: 'Setujui',
             type: 'info',
         });
-        if (ok) approveMutation.mutate(payroll.id);
+        if (ok) approveMutation.mutate(p.id);
     };
 
-    const handleSend = async (payroll) => {
+    const handleSend = async (p) => {
         const ok = await confirm({
             title: 'Kirim Slip Gaji?',
-            message: `Slip gaji ${payroll.employee?.fullName} akan dikirim. Tindakan ini tidak bisa dibatalkan.`,
+            message: `Slip gaji ${p.employee?.fullName} akan dikirim. Tidak bisa dibatalkan.`,
             confirmText: 'Kirim',
             type: 'warning',
         });
-        if (ok) sendMutation.mutate(payroll.id);
+        if (ok) sendMutation.mutate(p.id);
     };
 
-    const handleDetail = (payroll) => {
-        setSelectedPayroll(payroll);
-        setDetailModal(true);
+    const handleCSV = () => {
+        exportCSV(payrolls.map((p) => ({
+            Karyawan: p.employee?.fullName,
+            Jabatan: p.employee?.position || '',
+            'Gaji Pokok': Number(p.baseSalary),
+            Tunjangan: Number(p.allowances),
+            Potongan: Number(p.deductions) + Number(p.bpjsDeduction),
+            'Total Bersih': Number(p.totalSalary),
+            'Hari Hadir': p.presentDays,
+            'Hari Kerja': p.workingDays,
+            Status: STATUS[p.status]?.label,
+        })), `payroll_${period}`);
     };
 
     // Employee view
     if (!isAdmin) {
         return (
-            <div className="space-y-6">
+            <div className="space-y-5 page-enter">
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900">Slip Gaji</h1>
-                    <p className="mt-1 text-sm text-gray-500">Riwayat slip gaji Anda</p>
+                    <h1 className="text-2xl font-black text-gray-900 dark:text-white">Slip Gaji</h1>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Riwayat slip gaji Anda</p>
                 </div>
 
-                {loadingMy ? (
-                    <LoadingSpinner center />
-                ) : myPayrolls.length === 0 ? (
-                    <EmptyState
-                        title="Belum ada slip gaji"
-                        description="Slip gaji akan muncul di sini setelah diproses oleh HR"
-                    />
+                {loadingMy ? <LoadingSpinner center /> : myPayrolls.length === 0 ? (
+                    <EmptyState title="Belum ada slip gaji" description="Slip gaji akan muncul setelah diproses HR" />
                 ) : (
                     <div className="space-y-3">
-                        {myPayrolls.map((payroll) => (
+                        {myPayrolls.map((p) => (
                             <div
-                                key={payroll.id}
-                                className="transition-shadow cursor-pointer card hover:shadow-md"
-                                onClick={() => handleDetail(payroll)}
+                                key={p.id}
+                                onClick={() => { setSelected(p); setDetailModal(true); }}
+                                className="flex items-center gap-4 p-5 card-hover"
                             >
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <p className="font-semibold text-gray-900">{payroll.period}</p>
-                                        <p className="mt-1 text-sm text-gray-500">
-                                            {payroll.presentDays} hari hadir dari {payroll.workingDays} hari kerja
-                                        </p>
-                                    </div>
-                                    <div className="text-right">
-                                        <p className="text-lg font-bold text-gray-900">
-                                            Rp {Number(payroll.totalSalary).toLocaleString('id-ID')}
-                                        </p>
-                                        <Badge variant={statusVariant[payroll.status]}>
-                                            {statusLabel[payroll.status]}
-                                        </Badge>
-                                    </div>
+                                <div className="flex items-center justify-center flex-shrink-0 w-12 h-12 rounded-2xl bg-green-50 dark:bg-green-900/20">
+                                    <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                    </svg>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="font-bold text-gray-900 dark:text-white">Periode {p.period}</p>
+                                    <p className="text-sm text-gray-500 mt-0.5">{p.presentDays}/{p.workingDays} hari hadir</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="font-black text-gray-900 dark:text-white">
+                                        Rp {Number(p.totalSalary).toLocaleString('id-ID')}
+                                    </p>
+                                    <span className={STATUS[p.status]?.cls}>{STATUS[p.status]?.label}</span>
                                 </div>
                             </div>
                         ))}
                     </div>
                 )}
 
-                <Modal
-                    isOpen={detailModal}
-                    onClose={() => setDetailModal(false)}
-                    title="Detail Slip Gaji"
-                >
-                    <PayrollDetailModal payroll={selectedPayroll} />
+                <Modal isOpen={detailModal} onClose={() => setDetailModal(false)} title="Detail Slip Gaji">
+                    <PayrollDetailModal payroll={selected} />
                 </Modal>
             </div>
         );
@@ -196,182 +168,152 @@ export default function PayrollPage() {
 
     // Admin view
     return (
-        <div className="space-y-6">
+        <div className="space-y-5 page-enter">
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900">Penggajian</h1>
-                    <p className="mt-1 text-sm text-gray-500">Kelola payroll karyawan</p>
+                    <h1 className="text-2xl font-black text-gray-900 dark:text-white">Penggajian</h1>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Periode {period}</p>
                 </div>
-                <button
-                    onClick={handleGenerate}
-                    disabled={generateMutation.isPending}
-                    className="flex items-center gap-2 btn-primary"
-                >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    {generateMutation.isPending ? 'Generating...' : 'Generate Payroll'}
-                </button>
+                <div className="flex gap-2">
+                    <ExportButton onCSV={handleCSV} />
+                    <button
+                        onClick={handleGenerate}
+                        disabled={generateMutation.isPending}
+                        className="btn-primary"
+                    >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        {generateMutation.isPending ? 'Generating...' : 'Generate'}
+                    </button>
+                </div>
             </div>
 
             {/* Summary */}
             {summary && (
-                <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                    {[
-                        { label: 'Total Karyawan', value: summary.totalEmployees, color: 'text-gray-900' },
-                        { label: 'Draft', value: summary.draft, color: 'text-gray-500' },
-                        { label: 'Disetujui', value: summary.approved, color: 'text-blue-600' },
-                        { label: 'Terkirim', value: summary.sent, color: 'text-green-600' },
-                    ].map((stat) => (
-                        <div key={stat.label} className="text-center card">
-                            <p className={`text-3xl font-bold ${stat.color}`}>{stat.value}</p>
-                            <p className="mt-1 text-sm text-gray-500">{stat.label}</p>
-                        </div>
-                    ))}
-                </div>
-            )}
+                <>
+                    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                        {[
+                            { label: 'Total Karyawan', value: summary.totalEmployees, cls: 'text-gray-900 dark:text-white', bg: 'bg-gray-50 dark:bg-gray-800' },
+                            { label: 'Draft', value: summary.draft, cls: 'text-gray-600 dark:text-gray-400', bg: 'bg-gray-50 dark:bg-gray-800' },
+                            { label: 'Disetujui', value: summary.approved, cls: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20' },
+                            { label: 'Terkirim', value: summary.sent, cls: 'text-green-600', bg: 'bg-green-50 dark:bg-green-900/20' },
+                        ].map((s) => (
+                            <div key={s.label} className={`${s.bg} rounded-2xl p-4 text-center`}>
+                                <p className={`text-3xl font-black ${s.cls}`}>{s.value}</p>
+                                <p className="mt-1 text-sm font-medium text-gray-500 dark:text-gray-400">{s.label}</p>
+                            </div>
+                        ))}
+                    </div>
 
-            {summary && (
-                <div className="card">
-                    <div className="grid grid-cols-3 gap-4 text-center">
-                        <div>
-                            <p className="text-sm text-gray-500">Total Gaji Bruto</p>
-                            <p className="mt-1 text-xl font-bold text-gray-900">
-                                Rp {Number(summary.totalGross || 0).toLocaleString('id-ID')}
-                            </p>
-                        </div>
-                        <div>
-                            <p className="text-sm text-gray-500">Total Potongan</p>
-                            <p className="mt-1 text-xl font-bold text-red-600">
-                                Rp {Number(summary.totalDeductions || 0).toLocaleString('id-ID')}
-                            </p>
-                        </div>
-                        <div>
-                            <p className="text-sm text-gray-500">Total Gaji Bersih</p>
-                            <p className="mt-1 text-xl font-bold text-green-600">
-                                Rp {Number(summary.totalNet || 0).toLocaleString('id-ID')}
-                            </p>
+                    <div className="card">
+                        <div className="grid grid-cols-3 gap-4 text-center">
+                            <div>
+                                <p className="mb-1 text-xs text-gray-500">Total Bruto</p>
+                                <p className="text-lg font-black text-gray-900 dark:text-white">Rp {Number(summary.totalGross || 0).toLocaleString('id-ID')}</p>
+                            </div>
+                            <div>
+                                <p className="mb-1 text-xs text-gray-500">Total Potongan</p>
+                                <p className="text-lg font-black text-red-600">-Rp {Number(summary.totalDeductions || 0).toLocaleString('id-ID')}</p>
+                            </div>
+                            <div>
+                                <p className="mb-1 text-xs text-gray-500">Total Bersih</p>
+                                <p className="text-lg font-black text-green-600">Rp {Number(summary.totalNet || 0).toLocaleString('id-ID')}</p>
+                            </div>
                         </div>
                     </div>
-                </div>
+                </>
             )}
 
-            {/* Filter */}
-            <div>
-                <input
-                    type="month"
-                    value={period}
-                    onChange={(e) => setPeriod(e.target.value)}
-                    className="w-auto input-field"
-                />
+            {/* Period filter */}
+            <div className="flex items-center gap-3">
+                <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-auto input-field" />
             </div>
 
             {/* Table */}
             <div className="p-0 overflow-hidden card">
-                {isLoading ? (
-                    <LoadingSpinner center />
-                ) : payrolls.length === 0 ? (
+                {isLoading ? <LoadingSpinner center /> : payrolls.length === 0 ? (
                     <EmptyState
                         title="Belum ada data payroll"
-                        description={`Klik "Generate Payroll" untuk membuat payroll periode ${period}`}
-                        action={
-                            <button onClick={handleGenerate} className="btn-primary">
-                                Generate Payroll
-                            </button>
-                        }
+                        description={`Klik "Generate" untuk membuat payroll periode ${period}`}
+                        action={<button onClick={handleGenerate} className="btn-primary">Generate Payroll</button>}
                     />
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                            <thead>
-                                <tr className="border-b border-gray-100 bg-gray-50">
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Karyawan</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Hadir</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Gaji Pokok</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Tunjangan</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Potongan</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Total</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Status</th>
-                                    <th className="px-6 py-3" />
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-50">
-                                {payrolls.map((payroll) => (
-                                    <tr key={payroll.id} className="transition-colors hover:bg-gray-50">
-                                        <td className="px-6 py-4">
-                                            <p className="font-medium text-gray-900">{payroll.employee?.fullName}</p>
-                                            <p className="text-xs text-gray-400">{payroll.employee?.position}</p>
-                                        </td>
-                                        <td className="px-6 py-4 text-gray-600">
-                                            {payroll.presentDays}/{payroll.workingDays}
-                                            {payroll.lateDays > 0 && (
-                                                <span className="ml-1 text-xs text-yellow-600">
-                                                    ({payroll.lateDays} tlmbat)
-                                                </span>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4 text-gray-600">
-                                            Rp {Number(payroll.baseSalary).toLocaleString('id-ID')}
-                                        </td>
-                                        <td className="px-6 py-4 text-green-600">
-                                            +Rp {Number(payroll.allowances).toLocaleString('id-ID')}
-                                        </td>
-                                        <td className="px-6 py-4 text-red-500">
-                                            -Rp {(Number(payroll.deductions) + Number(payroll.bpjsDeduction)).toLocaleString('id-ID')}
-                                        </td>
-                                        <td className="px-6 py-4 font-semibold text-gray-900">
-                                            Rp {Number(payroll.totalSalary).toLocaleString('id-ID')}
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <Badge variant={statusVariant[payroll.status]}>
-                                                {statusLabel[payroll.status]}
-                                            </Badge>
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center justify-end gap-2">
-                                                <button
-                                                    onClick={() => handleDetail(payroll)}
-                                                    className="text-gray-400 transition-colors hover:text-primary-600"
-                                                    title="Detail"
-                                                >
-                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                                    </svg>
-                                                </button>
-                                                {payroll.status === 'DRAFT' && (
-                                                    <button
-                                                        onClick={() => handleApprove(payroll)}
-                                                        className="px-2 py-1 text-xs text-blue-600 transition-colors rounded-lg bg-blue-50 hover:bg-blue-100"
-                                                    >
-                                                        Setujui
-                                                    </button>
-                                                )}
-                                                {payroll.status === 'APPROVED' && (
-                                                    <button
-                                                        onClick={() => handleSend(payroll)}
-                                                        className="px-2 py-1 text-xs text-green-600 transition-colors rounded-lg bg-green-50 hover:bg-green-100"
-                                                    >
-                                                        Kirim
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </td>
+                    <>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="border-b border-gray-100 dark:border-gray-800">
+                                        <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Karyawan</th>
+                                        <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Hadir</th>
+                                        <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Gaji Pokok</th>
+                                        <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Potongan</th>
+                                        <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Total</th>
+                                        <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                                        <th className="px-6 py-3.5" />
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                                    {paginated.map((p) => (
+                                        <tr key={p.id} className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                                            <td className="px-6 py-4">
+                                                <p className="text-sm font-semibold text-gray-900 dark:text-white">{p.employee?.fullName}</p>
+                                                <p className="text-xs text-gray-400">{p.employee?.position}</p>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <span className="font-semibold text-gray-900 dark:text-white">{p.presentDays}</span>
+                                                <span className="text-gray-400">/{p.workingDays}</span>
+                                                {p.lateDays > 0 && <span className="ml-1 text-xs text-amber-500">({p.lateDays}×tl)</span>}
+                                            </td>
+                                            <td className="px-6 py-4 text-gray-700 dark:text-gray-300">
+                                                Rp {Number(p.baseSalary).toLocaleString('id-ID')}
+                                            </td>
+                                            <td className="px-6 py-4 text-red-500">
+                                                -Rp {(Number(p.deductions) + Number(p.bpjsDeduction)).toLocaleString('id-ID')}
+                                            </td>
+                                            <td className="px-6 py-4 font-black text-gray-900 dark:text-white">
+                                                Rp {Number(p.totalSalary).toLocaleString('id-ID')}
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <span className={STATUS[p.status]?.cls}>{STATUS[p.status]?.label}</span>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <div className="flex items-center gap-1.5 justify-end">
+                                                    <button
+                                                        onClick={() => { setSelected(p); setDetailModal(true); }}
+                                                        className="p-1.5 rounded-lg text-gray-400 hover:text-primary hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-colors"
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                                        </svg>
+                                                    </button>
+                                                    {p.status === 'DRAFT' && (
+                                                        <button onClick={() => handleApprove(p)} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/20 dark:hover:bg-blue-900/40 transition-colors">
+                                                            Setujui
+                                                        </button>
+                                                    )}
+                                                    {p.status === 'APPROVED' && (
+                                                        <button onClick={() => handleSend(p)} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-green-50 text-green-600 hover:bg-green-100 dark:bg-green-900/20 dark:hover:bg-green-900/40 transition-colors">
+                                                            Kirim
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-800">
+                            <Pagination page={page} totalPages={totalPages} onPage={goToPage} onPrev={prevPage} onNext={nextPage} />
+                        </div>
+                    </>
                 )}
             </div>
 
-            <Modal
-                isOpen={detailModal}
-                onClose={() => setDetailModal(false)}
-                title="Detail Payroll"
-            >
-                <PayrollDetailModal payroll={selectedPayroll} />
+            <Modal isOpen={detailModal} onClose={() => setDetailModal(false)} title="Detail Payroll">
+                <PayrollDetailModal payroll={selected} />
             </Modal>
         </div>
     );

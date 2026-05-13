@@ -5,25 +5,20 @@ import api from '../../api/axios';
 import { useToast } from '../../components/ui/Toast';
 import { useConfirm } from '../../components/ui/ConfirmDialog';
 import Modal from '../../components/ui/Modal';
-import Badge from '../../components/ui/Badge';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import EmptyState from '../../components/ui/EmptyState';
+import Pagination from '../../components/ui/Pagination';
+import ExportButton from '../../components/ui/ExportButton';
 import ManualAttendanceForm from './ManualAttendanceForm';
+import { usePagination } from '../../hooks/usePagination';
+import { useExport } from '../../hooks/useExport';
 
-const statusVariant = {
-    PRESENT: 'success',
-    LATE: 'warning',
-    ABSENT: 'danger',
-    PERMIT: 'info',
-    SICK: 'gray',
-};
-
-const statusLabel = {
-    PRESENT: 'Hadir',
-    LATE: 'Terlambat',
-    ABSENT: 'Tidak Hadir',
-    PERMIT: 'Izin',
-    SICK: 'Sakit',
+const STATUS = {
+    PRESENT: { label: 'Hadir', cls: 'badge-success' },
+    LATE: { label: 'Terlambat', cls: 'badge-warning' },
+    ABSENT: { label: 'Tidak Hadir', cls: 'badge-danger' },
+    PERMIT: { label: 'Izin', cls: 'badge-info' },
+    SICK: { label: 'Sakit', cls: 'badge-gray' },
 };
 
 const currentMonth = new Date().toISOString().slice(0, 7);
@@ -32,64 +27,54 @@ export default function AttendancePage() {
     const toast = useToast();
     const confirm = useConfirm();
     const queryClient = useQueryClient();
+    const { exportCSV } = useExport();
     const user = useAuthStore((s) => s.user);
     const isAdmin = ['SUPER_ADMIN', 'HR_ADMIN'].includes(user?.role);
 
     const [month, setMonth] = useState(currentMonth);
     const [modalOpen, setModalOpen] = useState(false);
 
-    // Today status (for employee)
-    const { data: todayStatus, isLoading: loadingToday } = useQuery({
+    const { data: todayStatus } = useQuery({
         queryKey: ['attendance-today'],
-        queryFn: async () => {
-            const res = await api.get('/attendance/today');
-            return res.data;
-        },
+        queryFn: () => api.get('/attendance/today').then((r) => r.data),
         enabled: !isAdmin,
+        refetchInterval: 30000,
     });
 
-    // Attendance list
     const { data: attendances = [], isLoading } = useQuery({
         queryKey: ['attendances', month, isAdmin],
         queryFn: async () => {
-            const endpoint = isAdmin ? '/attendance/company' : '/attendance/my';
-            const res = await api.get(endpoint, { params: { month } });
+            const res = await api.get(isAdmin ? '/attendance/company' : '/attendance/my', { params: { month } });
             return res.data;
         },
     });
 
-    // Summary (admin)
     const { data: summary } = useQuery({
         queryKey: ['attendance-summary', month],
-        queryFn: async () => {
-            const res = await api.get('/attendance/summary', { params: { month } });
-            return res.data;
-        },
+        queryFn: () => api.get('/attendance/summary', { params: { month } }).then((r) => r.data),
         enabled: isAdmin,
     });
+
+    const { page, totalPages, paginated, goToPage, nextPage, prevPage } = usePagination(attendances, 15);
 
     const checkInMutation = useMutation({
         mutationFn: () => api.post('/attendance/check-in', {}),
         onSuccess: () => {
-            toast('Absen masuk berhasil', 'success');
+            toast('Absen masuk berhasil! ✓', 'success');
             queryClient.invalidateQueries(['attendance-today']);
             queryClient.invalidateQueries(['attendances']);
         },
-        onError: (err) => {
-            toast(err.response?.data?.message || 'Gagal absen masuk', 'error');
-        },
+        onError: (err) => toast(err.response?.data?.message || 'Gagal absen', 'error'),
     });
 
     const checkOutMutation = useMutation({
         mutationFn: () => api.post('/attendance/check-out', {}),
         onSuccess: () => {
-            toast('Absen pulang berhasil', 'success');
+            toast('Absen pulang berhasil! ✓', 'success');
             queryClient.invalidateQueries(['attendance-today']);
             queryClient.invalidateQueries(['attendances']);
         },
-        onError: (err) => {
-            toast(err.response?.data?.message || 'Gagal absen pulang', 'error');
-        },
+        onError: (err) => toast(err.response?.data?.message || 'Gagal absen', 'error'),
     });
 
     const handleCheckIn = async () => {
@@ -112,97 +97,108 @@ export default function AttendancePage() {
         if (ok) checkOutMutation.mutate();
     };
 
+    const handleCSV = () => {
+        exportCSV(attendances.map((a) => ({
+            Tanggal: new Date(a.date).toLocaleDateString('id-ID'),
+            Karyawan: a.employee?.fullName || '',
+            'Jam Masuk': a.checkIn ? new Date(a.checkIn).toLocaleTimeString('id-ID') : '',
+            'Jam Pulang': a.checkOut ? new Date(a.checkOut).toLocaleTimeString('id-ID') : '',
+            Status: STATUS[a.status]?.label || a.status,
+            Terlambat: a.isLate ? `${a.lateMinutes} menit` : '-',
+        })), 'absensi');
+    };
+
     return (
-        <div className="space-y-6">
+        <div className="space-y-5 page-enter">
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900">Absensi</h1>
-                    <p className="mt-1 text-sm text-gray-500">
-                        {isAdmin ? 'Rekap kehadiran seluruh karyawan' : 'Rekap kehadiran Anda'}
+                    <h1 className="text-2xl font-black text-gray-900 dark:text-white">Absensi</h1>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+                        {isAdmin ? 'Rekap kehadiran karyawan' : 'Rekap kehadiran Anda'}
                     </p>
                 </div>
-                {isAdmin && (
-                    <button onClick={() => setModalOpen(true)} className="flex items-center gap-2 btn-primary">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                        </svg>
-                        Input Manual
-                    </button>
-                )}
+                <div className="flex gap-2">
+                    <ExportButton onCSV={handleCSV} />
+                    {isAdmin && (
+                        <button onClick={() => setModalOpen(true)} className="btn-primary">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                            Input Manual
+                        </button>
+                    )}
+                </div>
             </div>
 
-            {/* Check in/out card (employee) */}
+            {/* Check in/out (employee) */}
             {!isAdmin && (
-                <div className="card">
-                    <h3 className="mb-4 font-semibold text-gray-900">Absensi Hari Ini</h3>
-                    {loadingToday ? (
-                        <LoadingSpinner center size="sm" />
-                    ) : (
-                        <div className="space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="p-4 text-center bg-gray-50 rounded-xl">
-                                    <p className="mb-1 text-xs text-gray-500">Absen Masuk</p>
-                                    <p className="text-2xl font-bold text-gray-900">
-                                        {todayStatus?.attendance?.checkIn
-                                            ? new Date(todayStatus.attendance.checkIn).toLocaleTimeString('id-ID', {
-                                                hour: '2-digit',
-                                                minute: '2-digit',
-                                            })
-                                            : '--:--'}
-                                    </p>
-                                    {todayStatus?.attendance?.isLate && (
-                                        <Badge variant="warning" className="mt-1">
-                                            Terlambat {todayStatus.attendance.lateMinutes} menit
-                                        </Badge>
-                                    )}
-                                </div>
-                                <div className="p-4 text-center bg-gray-50 rounded-xl">
-                                    <p className="mb-1 text-xs text-gray-500">Absen Pulang</p>
-                                    <p className="text-2xl font-bold text-gray-900">
-                                        {todayStatus?.attendance?.checkOut
-                                            ? new Date(todayStatus.attendance.checkOut).toLocaleTimeString('id-ID', {
-                                                hour: '2-digit',
-                                                minute: '2-digit',
-                                            })
-                                            : '--:--'}
-                                    </p>
-                                </div>
-                            </div>
-
-                            <div className="flex gap-3">
-                                <button
-                                    onClick={handleCheckIn}
-                                    disabled={todayStatus?.hasCheckedIn || checkInMutation.isPending}
-                                    className="flex-1 btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    {checkInMutation.isPending ? 'Memproses...' : 'Absen Masuk'}
-                                </button>
-                                <button
-                                    onClick={handleCheckOut}
-                                    disabled={!todayStatus?.hasCheckedIn || todayStatus?.hasCheckedOut || checkOutMutation.isPending}
-                                    className="flex-1 btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    {checkOutMutation.isPending ? 'Memproses...' : 'Absen Pulang'}
-                                </button>
-                            </div>
+                <div className="overflow-hidden card">
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="font-bold text-gray-900 dark:text-white">Absensi Hari Ini</h3>
+                        <div className="flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-full ${todayStatus?.hasCheckedIn && !todayStatus?.hasCheckedOut ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
+                            <span className="text-xs text-gray-500">
+                                {todayStatus?.hasCheckedOut ? 'Selesai' : todayStatus?.hasCheckedIn ? 'Sedang kerja' : 'Belum absen'}
+                            </span>
                         </div>
-                    )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                        <div className="p-4 text-center bg-gray-50 dark:bg-gray-800 rounded-2xl">
+                            <p className="mb-1 text-xs text-gray-500">Masuk</p>
+                            <p className="text-2xl font-black text-gray-900 dark:text-white">
+                                {todayStatus?.attendance?.checkIn
+                                    ? new Date(todayStatus.attendance.checkIn).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+                                    : '--:--'}
+                            </p>
+                            {todayStatus?.attendance?.isLate && (
+                                <span className="inline-block mt-1 badge-warning">
+                                    +{todayStatus.attendance.lateMinutes}m terlambat
+                                </span>
+                            )}
+                        </div>
+                        <div className="p-4 text-center bg-gray-50 dark:bg-gray-800 rounded-2xl">
+                            <p className="mb-1 text-xs text-gray-500">Pulang</p>
+                            <p className="text-2xl font-black text-gray-900 dark:text-white">
+                                {todayStatus?.attendance?.checkOut
+                                    ? new Date(todayStatus.attendance.checkOut).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+                                    : '--:--'}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                        <button
+                            onClick={handleCheckIn}
+                            disabled={todayStatus?.hasCheckedIn || checkInMutation.isPending}
+                            className="flex-1 py-3 btn-primary disabled:opacity-40"
+                        >
+                            {checkInMutation.isPending ? 'Memproses...' : '✓ Absen Masuk'}
+                        </button>
+                        <button
+                            onClick={handleCheckOut}
+                            disabled={!todayStatus?.hasCheckedIn || todayStatus?.hasCheckedOut || checkOutMutation.isPending}
+                            className="flex-1 py-3 btn-secondary disabled:opacity-40"
+                        >
+                            {checkOutMutation.isPending ? 'Memproses...' : 'Absen Pulang'}
+                        </button>
+                    </div>
                 </div>
             )}
 
-            {/* Summary (admin) */}
+            {/* Summary cards (admin) */}
             {isAdmin && summary && (
                 <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
                     {[
-                        { label: 'Total Absensi', value: summary.total, color: 'text-gray-900' },
-                        { label: 'Hadir', value: summary.present, color: 'text-green-600' },
-                        { label: 'Terlambat', value: summary.late, color: 'text-yellow-600' },
-                        { label: 'Tidak Hadir', value: summary.absent, color: 'text-red-600' },
-                    ].map((stat) => (
-                        <div key={stat.label} className="text-center card">
-                            <p className={`text-3xl font-bold ${stat.color}`}>{stat.value}</p>
-                            <p className="mt-1 text-sm text-gray-500">{stat.label}</p>
+                        { label: 'Total', value: summary.total, cls: 'text-gray-900 dark:text-white', bg: 'bg-gray-50 dark:bg-gray-800' },
+                        { label: 'Hadir', value: summary.present, cls: 'text-green-600', bg: 'bg-green-50 dark:bg-green-900/20' },
+                        { label: 'Terlambat', value: summary.late, cls: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20' },
+                        { label: 'Tidak Hadir', value: summary.absent, cls: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20' },
+                    ].map((s) => (
+                        <div key={s.label} className={`${s.bg} rounded-2xl p-4 text-center`}>
+                            <p className={`text-3xl font-black ${s.cls}`}>{s.value}</p>
+                            <p className="mt-1 text-sm font-medium text-gray-500 dark:text-gray-400">{s.label}</p>
                         </div>
                     ))}
                 </div>
@@ -216,6 +212,7 @@ export default function AttendancePage() {
                     onChange={(e) => setMonth(e.target.value)}
                     className="w-auto input-field"
                 />
+                <span className="text-sm text-gray-500">{attendances.length} data</span>
             </div>
 
             {/* Table */}
@@ -223,90 +220,62 @@ export default function AttendancePage() {
                 {isLoading ? (
                     <LoadingSpinner center />
                 ) : attendances.length === 0 ? (
-                    <EmptyState
-                        title="Belum ada data absensi"
-                        description="Data absensi bulan ini belum tersedia"
-                    />
+                    <EmptyState title="Belum ada data absensi" description="Data absensi bulan ini belum tersedia" />
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                            <thead>
-                                <tr className="border-b border-gray-100 bg-gray-50">
-                                    {isAdmin && (
-                                        <th className="px-6 py-3 font-medium text-left text-gray-500">Karyawan</th>
-                                    )}
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Tanggal</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Masuk</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Pulang</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Status</th>
-                                    <th className="px-6 py-3 font-medium text-left text-gray-500">Keterangan</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-50">
-                                {attendances.map((att) => (
-                                    <tr key={att.id} className="transition-colors hover:bg-gray-50">
-                                        {isAdmin && (
-                                            <td className="px-6 py-4">
-                                                <p className="font-medium text-gray-900">{att.employee?.fullName}</p>
-                                                <p className="text-xs text-gray-400">{att.employee?.department?.name}</p>
-                                            </td>
-                                        )}
-                                        <td className="px-6 py-4 text-gray-600">
-                                            {new Date(att.date).toLocaleDateString('id-ID', {
-                                                weekday: 'short',
-                                                day: 'numeric',
-                                                month: 'short',
-                                            })}
-                                        </td>
-                                        <td className="px-6 py-4 text-gray-600">
-                                            {att.checkIn
-                                                ? new Date(att.checkIn).toLocaleTimeString('id-ID', {
-                                                    hour: '2-digit',
-                                                    minute: '2-digit',
-                                                })
-                                                : '-'}
-                                        </td>
-                                        <td className="px-6 py-4 text-gray-600">
-                                            {att.checkOut
-                                                ? new Date(att.checkOut).toLocaleTimeString('id-ID', {
-                                                    hour: '2-digit',
-                                                    minute: '2-digit',
-                                                })
-                                                : '-'}
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <Badge variant={statusVariant[att.status]}>
-                                                {statusLabel[att.status]}
-                                            </Badge>
-                                            {att.isLate && att.lateMinutes > 0 && (
-                                                <span className="ml-2 text-xs text-yellow-600">
-                                                    +{att.lateMinutes} mnt
-                                                </span>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4 text-xs text-gray-400">
-                                            {att.isManualEntry ? '📝 Manual' : ''}
-                                            {att.note || ''}
-                                        </td>
+                    <>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="border-b border-gray-100 dark:border-gray-800">
+                                        {isAdmin && <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Karyawan</th>}
+                                        <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Tanggal</th>
+                                        <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Masuk</th>
+                                        <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Pulang</th>
+                                        <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                                        <th className="text-left px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Ket.</th>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                                    {paginated.map((att) => (
+                                        <tr key={att.id} className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                                            {isAdmin && (
+                                                <td className="px-6 py-4">
+                                                    <p className="text-sm font-semibold text-gray-900 dark:text-white">{att.employee?.fullName}</p>
+                                                    <p className="text-xs text-gray-400">{att.employee?.department?.name}</p>
+                                                </td>
+                                            )}
+                                            <td className="px-6 py-4 text-gray-700 dark:text-gray-300">
+                                                {new Date(att.date).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short' })}
+                                            </td>
+                                            <td className="px-6 py-4 font-mono text-gray-700 dark:text-gray-300">
+                                                {att.checkIn ? new Date(att.checkIn).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-'}
+                                            </td>
+                                            <td className="px-6 py-4 font-mono text-gray-700 dark:text-gray-300">
+                                                {att.checkOut ? new Date(att.checkOut).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-'}
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <span className={STATUS[att.status]?.cls}>{STATUS[att.status]?.label}</span>
+                                            </td>
+                                            <td className="px-6 py-4 text-xs text-gray-400">
+                                                {att.isLate && att.lateMinutes > 0 && `+${att.lateMinutes}m`}
+                                                {att.isManualEntry && ' 📝'}
+                                                {att.note && ` · ${att.note}`}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-800">
+                            <Pagination page={page} totalPages={totalPages} onPage={goToPage} onPrev={prevPage} onNext={nextPage} />
+                        </div>
+                    </>
                 )}
             </div>
 
-            {/* Modal manual entry */}
-            <Modal
-                isOpen={modalOpen}
-                onClose={() => setModalOpen(false)}
-                title="Input Absensi Manual"
-            >
+            <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title="Input Absensi Manual">
                 <ManualAttendanceForm
-                    onSuccess={() => {
-                        setModalOpen(false);
-                        queryClient.invalidateQueries(['attendances']);
-                    }}
+                    onSuccess={() => { setModalOpen(false); queryClient.invalidateQueries(['attendances']); }}
                     onCancel={() => setModalOpen(false)}
                 />
             </Modal>
